@@ -1,0 +1,16 @@
+.gitignore
+.github/**
+.vscode/**
+.vscodeignore*
+src/**
+test/**
+scripts/**
+node_modules/**
+runtime/**
+images/icon-concept-*.png
+images/*preview*.png
+**/*.map
+*.vsix
+esbuild.mjs
+tsconfig.json
+package-lock.json

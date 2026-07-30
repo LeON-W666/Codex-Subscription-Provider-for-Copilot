@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible problem with the extension
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, auth.json content, private source code,
+        customer data, SAP connection details, or unredacted local paths.
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      placeholder: 0.5.2
+    validations:
+      required: true
+  - type: dropdown
+    id: distribution
+    attributes:
+      label: Distribution
+      options:
+        - Marketplace Thin
+        - GitHub Thin VSIX
+        - GitHub Full Win64 VSIX
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: VS Code version, operating system, and remote mode if used
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: Describe what happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Select...
+        2. Run...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted diagnostics
+      description: Include only sanitized output from the provider diagnostics.
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed credentials, private code, customer data, and sensitive paths.
+          required: true

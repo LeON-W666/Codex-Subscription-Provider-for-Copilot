@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/LeON-W666/Codex-Subscription-Provider-for-Copilot/security/advisories/new
+    about: Report vulnerabilities privately. Do not post secrets in a public issue.

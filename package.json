@@ -1,0 +1,201 @@
+{
+  "name": "copilot-codex-provider",
+  "displayName": "Codex Subscription Provider for Copilot",
+  "description": "Use explicit models from a local Codex ChatGPT subscription in GitHub Copilot Chat while Copilot executes tools and edits.",
+  "version": "0.5.2",
+  "publisher": "leonbwang",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#FFFFFF",
+    "theme": "light"
+  },
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "codex",
+    "copilot",
+    "chatgpt",
+    "language model",
+    "agent"
+  ],
+  "activationEvents": [
+    "onLanguageModelChatProvider:openai-codex-subscription",
+    "onCommand:copilotCodexProvider.manage",
+    "onCommand:copilotCodexProvider.refreshModels",
+    "onCommand:copilotCodexProvider.showAvailableModels",
+    "onCommand:copilotCodexProvider.showLastRequestDetails",
+    "onCommand:copilotCodexProvider.showRuntimeStatus"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "openai-codex-subscription",
+        "displayName": "Codex Subscription",
+        "managementCommand": "copilotCodexProvider.manage"
+      }
+    ],
+    "commands": [
+      {
+        "command": "copilotCodexProvider.manage",
+        "title": "Codex Subscription Provider: Manage"
+      },
+      {
+        "command": "copilotCodexProvider.refreshModels",
+        "title": "Codex Subscription Provider: Refresh Models"
+      },
+      {
+        "command": "copilotCodexProvider.showAvailableModels",
+        "title": "Codex Subscription Provider: Show Available Models"
+      },
+      {
+        "command": "copilotCodexProvider.showLastRequestDetails",
+        "title": "Codex Subscription Provider: Show Last Request Details"
+      },
+      {
+        "command": "copilotCodexProvider.showRuntimeStatus",
+        "title": "Codex Subscription Provider: Check Codex Runtime"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Subscription Provider",
+      "properties": {
+        "copilotCodexProvider.modelSource": {
+          "type": "string",
+          "enum": [
+            "discovered",
+            "manual"
+          ],
+          "default": "discovered",
+          "description": "Discover models from the local Codex subscription or use manualModels. Every model remains an explicit Copilot picker entry."
+        },
+        "copilotCodexProvider.manualModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Explicit Codex model IDs used when modelSource is manual."
+        },
+        "copilotCodexProvider.enabledModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Optional allowlist of model IDs. Leave empty to expose all visible discovered or manual models."
+        },
+        "copilotCodexProvider.modelCacheTtlMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 1440,
+          "description": "Minutes to cache the Codex model catalog before refreshing it."
+        },
+        "copilotCodexProvider.runtimeMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "external",
+            "bundled"
+          ],
+          "enumDescriptions": [
+            "Prefer a configured path, PATH executable, or official OpenAI VS Code extension, then use a bundled runtime when present.",
+            "Require an official Codex executable outside this extension, including the official OpenAI VS Code extension.",
+            "Require the runtime included in a Full distribution."
+          ],
+          "default": "auto",
+          "description": "Select how the extension locates Codex. Thin builds can use a configured path, PATH, or the official OpenAI VS Code extension."
+        },
+        "copilotCodexProvider.codexExecutablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the official Codex executable. In auto mode, leave empty to search PATH and then the bundled runtime."
+        },
+        "copilotCodexProvider.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "model-default",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "default": "model-default",
+          "description": "Reasoning effort for the explicitly selected model. Unsupported values are rejected instead of downgraded."
+        },
+        "copilotCodexProvider.maxToolCalls": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum number of Copilot tool calls Codex may request in one response."
+        },
+        "copilotCodexProvider.modelMaxInputTokens": {
+          "type": "number",
+          "default": 200000,
+          "minimum": 1024,
+          "description": "Input-token capacity advertised to VS Code."
+        },
+        "copilotCodexProvider.modelMaxOutputTokens": {
+          "type": "number",
+          "default": 32768,
+          "minimum": 1024,
+          "description": "Output-token capacity advertised to VS Code."
+        },
+        "copilotCodexProvider.logLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "info",
+            "debug"
+          ],
+          "default": "info",
+          "description": "Extension log verbosity. Prompt content and credentials are never logged."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run check && node scripts/prepare-sdk-runtime.mjs && node esbuild.mjs",
+    "watch": "node scripts/prepare-sdk-runtime.mjs && node esbuild.mjs --watch",
+    "test": "vitest run --pool=threads --poolOptions.threads.singleThread=true",
+    "smoke:codex": "node scripts/smoke-codex.mjs",
+    "smoke:models": "node scripts/smoke-model-catalog.mjs",
+    "smoke:extension": "node scripts/smoke-extension-load.cjs",
+    "smoke:sdk": "node scripts/smoke-sdk-load.mjs",
+    "validate": "npm run test && npm run build && npm run smoke:extension && npm run smoke:sdk",
+    "package": "npm run package:all",
+    "package:thin": "npm run validate && vsce package --ignoreFile .vscodeignore.thin --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.5.2-thin.vsix",
+    "package:full": "npm run validate && node scripts/prepare-full-runtime.mjs && vsce package --target win32-x64 --ignoreFile .vscodeignore.full --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.5.2-win32-x64-full.vsix",
+    "package:all": "npm run package:thin && npm run package:full",
+    "publish:marketplace": "npm run validate && vsce publish --ignoreFile .vscodeignore.thin --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@openai/codex-sdk": "^0.146.0",
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.109.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LeON-W666/Codex-Subscription-Provider-for-Copilot.git"
+  },
+  "homepage": "https://github.com/LeON-W666/Codex-Subscription-Provider-for-Copilot#readme",
+  "bugs": {
+    "url": "https://github.com/LeON-W666/Codex-Subscription-Provider-for-Copilot/issues"
+  }
+}

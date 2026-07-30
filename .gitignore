@@ -1,0 +1,31 @@
+# Dependencies and generated output
+node_modules/
+dist/
+vendor/
+runtime/
+coverage/
+*.vsix
+SHA256SUMS.txt
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.codex/
+.vscode/settings.json
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Local design drafts
+images/icon-concept-*.png
+images/*preview*.png
+
+# Editor and operating-system files
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini

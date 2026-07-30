@@ -1,0 +1,55 @@
+name: Release distributions
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ("${{ github.ref_name }}" -ne "v$version") {
+            throw "Tag ${{ github.ref_name }} does not match package version $version."
+          }
+
+      - name: Build and package
+        run: npm run package:all
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem -Filter *.vsix |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content -Encoding ascii SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release create "${{ github.ref_name }}" `
+            "copilot-codex-provider-$version-thin.vsix" `
+            "copilot-codex-provider-$version-win32-x64-full.vsix" `
+            "SHA256SUMS.txt" `
+            --generate-notes `
+            --title "${{ github.ref_name }}"
