@@ -11,6 +11,17 @@ An unofficial Visual Studio Code extension that connects GitHub Copilot Chat to 
 
 [简体中文](README.zh-CN.md)
 
+## 0.6.0 Provider Reliability
+
+- Links Copilot-supplied virtual workspace URI resolvers to compatible editing
+  tools while keeping all tool execution inside Copilot.
+- Compacts long conversations as complete tool-call/result groups with a
+  configurable bridge input budget.
+- Treats the narrowly identified skill-description budget warning as
+  recoverable only when the final structured response remains valid.
+- Keeps unknown Runtime errors, forbidden Codex side effects, and unauthorized
+  tool calls fail-closed.
+
 ## How It Works
 
 ```text

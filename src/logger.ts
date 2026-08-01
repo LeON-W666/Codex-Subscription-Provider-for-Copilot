@@ -33,6 +33,12 @@ export class ProviderLogger implements vscode.Disposable {
     }
   }
 
+  public warn(message: string): void {
+    if (LEVELS[this.level] >= LEVELS.info) {
+      this.output.warn(message);
+    }
+  }
+
   public debug(message: string): void {
     if (LEVELS[this.level] >= LEVELS.debug) {
       this.output.debug(message);

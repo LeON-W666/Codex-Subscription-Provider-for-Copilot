@@ -2,7 +2,7 @@
   "name": "copilot-codex-provider",
   "displayName": "Codex Subscription Provider for Copilot",
   "description": "Use explicit models from a local Codex ChatGPT subscription in GitHub Copilot Chat while Copilot executes tools and edits.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "leonbwang",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -140,6 +140,13 @@
           "maximum": 16,
           "description": "Maximum number of Copilot tool calls Codex may request in one response."
         },
+        "copilotCodexProvider.bridgeInputTokenBudget": {
+          "type": "number",
+          "default": 45000,
+          "minimum": 16000,
+          "maximum": 200000,
+          "description": "Approximate total token budget for the Copilot-to-Codex bridge prompt. Older messages are omitted only as complete tool-call/result groups, while the latest user instruction and newest evidence are retained."
+        },
         "copilotCodexProvider.modelMaxInputTokens": {
           "type": "number",
           "default": 200000,
@@ -176,8 +183,8 @@
     "smoke:sdk": "node scripts/smoke-sdk-load.mjs",
     "validate": "npm run test && npm run build && npm run smoke:extension && npm run smoke:sdk",
     "package": "npm run package:all",
-    "package:thin": "npm run validate && vsce package --ignoreFile .vscodeignore.thin --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.5.2-thin.vsix",
-    "package:full": "npm run validate && node scripts/prepare-full-runtime.mjs && vsce package --target win32-x64 --ignoreFile .vscodeignore.full --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.5.2-win32-x64-full.vsix",
+    "package:thin": "npm run validate && vsce package --ignoreFile .vscodeignore.thin --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.6.0-thin.vsix",
+    "package:full": "npm run validate && node scripts/prepare-full-runtime.mjs && vsce package --target win32-x64 --ignoreFile .vscodeignore.full --no-dependencies --allow-missing-repository --out copilot-codex-provider-0.6.0-win32-x64-full.vsix",
     "package:all": "npm run package:thin && npm run package:full",
     "publish:marketplace": "npm run validate && vsce publish --ignoreFile .vscodeignore.thin --no-dependencies --allow-missing-repository"
   },

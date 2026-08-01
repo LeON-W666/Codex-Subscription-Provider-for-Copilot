@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 - Provider Reliability and Virtual Resource Editing
+
+Released 2026-08-02.
+
+- Link Copilot-supplied virtual workspace URI resolvers to compatible editing
+  tools without moving tool execution into the Provider.
+- Add evidence-preserving conversation compaction with a configurable bridge
+  input budget and privacy-safe request metrics.
+- Add conditional diagnostics and activation guidance that never advertises a
+  tool Copilot did not supply.
+- Treat the narrowly identified skill-description shortening item as a
+  recoverable Runtime warning when a non-empty, protocol-valid response is
+  available.
+- Keep unknown Runtime errors, forbidden side effects, invalid responses, and
+  unauthorized tool calls fail-closed.
+- Add privacy-safe result diagnostics without logging raw Runtime messages or
+  response content.
+
 ## 0.5.2 - SDK Compatibility and Icon
 
 - Fixed `ERR_INVALID_ARG_VALUE: filename ... Received undefined` on the first

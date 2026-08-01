@@ -13,6 +13,7 @@ export interface ProviderConfiguration {
   readonly codexExecutablePath: string;
   readonly reasoningEffort: string;
   readonly maxToolCalls: number;
+  readonly bridgeInputTokenBudget: number;
   readonly modelMaxInputTokens: number;
   readonly modelMaxOutputTokens: number;
   readonly logLevel: LogLevel;
@@ -43,6 +44,11 @@ export function readConfiguration(): ProviderConfiguration {
       Math.trunc(configuration.get<number>("maxToolCalls", 4)),
       1,
       16
+    ),
+    bridgeInputTokenBudget: clamp(
+      Math.trunc(configuration.get<number>("bridgeInputTokenBudget", 45000)),
+      16000,
+      200000
     ),
     modelMaxInputTokens: Math.max(
       1024,

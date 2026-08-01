@@ -1,7 +1,18 @@
 import { createHash } from "node:crypto";
+import {
+  compactConversation,
+  type ConversationCompactionResult
+} from "./conversationCompactor";
+import {
+  buildToolCapabilityInstructions,
+  resolveToolCapabilities
+} from "./toolCapabilities";
 
 const IMAGE_TOKEN_ESTIMATE = 1024;
 const MESSAGE_TOKEN_OVERHEAD = 4;
+const DEFAULT_BRIDGE_INPUT_TOKEN_BUDGET = 45_000;
+const MINIMUM_CONVERSATION_TOKEN_BUDGET = 4_096;
+const FIXED_PROMPT_TOKEN_RESERVE = 2_000;
 
 export interface ToolDefinitionLike {
   readonly name: string;
@@ -35,6 +46,17 @@ export interface BridgeImageInput {
 export interface CodexBridgeRequest {
   readonly prompt: string;
   readonly images: readonly BridgeImageInput[];
+  readonly estimatedInputTokens: number;
+  readonly conversationCompaction: ConversationCompactionSummary;
+}
+
+export interface ConversationCompactionSummary {
+  readonly applied: boolean;
+  readonly tokenBudget: number;
+  readonly originalTokenEstimate: number;
+  readonly retainedTokenEstimate: number;
+  readonly omittedMessageCount: number;
+  readonly overBudget: boolean;
 }
 
 export type BridgeResponse =
@@ -92,9 +114,18 @@ export function buildCodexPrompt(
   userRole: number,
   toolModeRequired: boolean,
   maxToolCalls: number,
-  runtimeIdentity: BridgeRuntimeIdentity
+  runtimeIdentity: BridgeRuntimeIdentity,
+  inputTokenBudget = DEFAULT_BRIDGE_INPUT_TOKEN_BUDGET
 ): string {
-  return buildCodexBridgeRequest(messages, tools, userRole, toolModeRequired, maxToolCalls, runtimeIdentity).prompt;
+  return buildCodexBridgeRequest(
+    messages,
+    tools,
+    userRole,
+    toolModeRequired,
+    maxToolCalls,
+    runtimeIdentity,
+    inputTokenBudget
+  ).prompt;
 }
 
 export function buildCodexBridgeRequest(
@@ -103,16 +134,37 @@ export function buildCodexBridgeRequest(
   userRole: number,
   toolModeRequired: boolean,
   maxToolCalls: number,
-  runtimeIdentity: BridgeRuntimeIdentity
+  runtimeIdentity: BridgeRuntimeIdentity,
+  inputTokenBudget = DEFAULT_BRIDGE_INPUT_TOKEN_BUDGET
 ): CodexBridgeRequest {
   const availableTools = (tools ?? []).map(tool => ({
     name: tool.name,
     description: tool.description,
     inputSchema: normalizeSchema(tool.inputSchema)
   }));
+  const capabilities = resolveToolCapabilities(tools);
+  const capabilityInstructions = buildToolCapabilityInstructions(capabilities);
+  const boundedInputTokenBudget = Math.max(
+    MINIMUM_CONVERSATION_TOKEN_BUDGET,
+    Math.trunc(inputTokenBudget)
+  );
+  const nonConversationTokenEstimate =
+    estimateTokens(JSON.stringify(availableTools)) +
+    estimateTokens(JSON.stringify(capabilities)) +
+    FIXED_PROMPT_TOKEN_RESERVE;
+  const conversationTokenBudget = Math.max(
+    MINIMUM_CONVERSATION_TOKEN_BUDGET,
+    boundedInputTokenBudget - nonConversationTokenEstimate
+  );
+  const compaction = compactConversation(
+    messages,
+    userRole,
+    conversationTokenBudget,
+    estimateMessageTokens
+  );
   const images: BridgeImageInput[] = [];
   const imageIndexes = new Map<string, number>();
-  const conversation = messages.map(message => ({
+  const conversation = compaction.messages.map(message => ({
     role: message.role === userRole ? "user" : "assistant",
     content: message.content.map(part => serializePart(part, images, imageIndexes))
   }));
@@ -140,19 +192,34 @@ export function buildCodexBridgeRequest(
     `For tool use, return kind=tool_calls, set text to null, and request at most ${maxToolCalls} calls.`,
     "Each tool-call arguments field must be a JSON-encoded object matching that tool's input schema.",
     "Never invent a tool name. Copilot will execute accepted calls and send results in a later request.",
+    "For resource-changing tasks, follow the evidence-driven sequence DISCOVER, CREATE_IF_MISSING, RESOLVE_URI, EDIT, DIAGNOSE, REPAIR_IF_NEEDED, ACTIVATE_IF_AVAILABLE, VERIFY.",
+    "A stage is complete only when CONVERSATION_JSON contains its successful matching tool_result. Retry a failed edit at most once after refreshing the target state; otherwise report the failure.",
+    ...capabilityInstructions,
     "Image parts in CONVERSATION_JSON are real images attached to this request in ascending imageIndex order.",
     "Multiple image placeholders can reference the same imageIndex when Copilot repeats an image in conversation history.",
     "Analyze attached images directly with your vision capability; do not treat image placeholders as textual image descriptions.",
+    compaction.applied
+      ? "Older conversation messages were omitted as complete call/result groups to fit the input budget. Missing history is not evidence; reread required state with supplied tools."
+      : "No conversation messages were omitted.",
     toolInstruction,
     "RUNTIME_IDENTITY_JSON:",
     JSON.stringify(runtimeIdentity),
+    "CAPABILITY_LINKS_JSON:",
+    JSON.stringify(capabilities),
+    "CONVERSATION_COMPACTION_JSON:",
+    JSON.stringify(toCompactionSummary(compaction)),
     "AVAILABLE_TOOLS_JSON:",
     JSON.stringify(availableTools),
     "CONVERSATION_JSON:",
     JSON.stringify(conversation)
   ].join("\n");
 
-  return { prompt, images };
+  return {
+    prompt,
+    images,
+    estimatedInputTokens: estimateTokens(prompt) + images.length * IMAGE_TOKEN_ESTIMATE,
+    conversationCompaction: toCompactionSummary(compaction)
+  };
 }
 
 export function parseBridgeResponse(
@@ -334,6 +401,19 @@ function normalizeSchema(schema: object | undefined): object {
     return { type: "object", properties: {}, additionalProperties: false };
   }
   return schema;
+}
+
+function toCompactionSummary(
+  result: ConversationCompactionResult<MessageLike>
+): ConversationCompactionSummary {
+  return {
+    applied: result.applied,
+    tokenBudget: result.tokenBudget,
+    originalTokenEstimate: result.originalTokenEstimate,
+    retainedTokenEstimate: result.retainedTokenEstimate,
+    omittedMessageCount: result.omittedMessageCount,
+    overBudget: result.overBudget
+  };
 }
 
 function isTextPart(value: unknown): value is TextPartLike {

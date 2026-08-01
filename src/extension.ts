@@ -139,7 +139,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  logger.info("Codex Subscription Provider 0.5.2 SDK Compatibility activated.");
+  logger.info("Codex Subscription Provider 0.6.0 Provider Reliability activated.");
 }
 
 export function deactivate(): void {
