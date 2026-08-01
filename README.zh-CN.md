@@ -10,6 +10,13 @@
 > This is an independent project and is not endorsed by OpenAI, Microsoft, or
 > GitHub.
 
+## 0.6.0 Provider Reliability
+
+- 在不改变 Copilot 工具执行边界的前提下，关联虚拟 workspace URI 与编辑工具。
+- 按完整工具调用/结果组压缩长对话，并提供可配置的桥接输入预算。
+- 仅在最终结构化响应仍然有效时，恢复已严格识别的 Skill 描述预算 Warning。
+- 对未知 Runtime 错误、禁止的 Codex 副作用和未授权工具调用继续保持失败关闭。
+
 ## 0.5.2 SDK Compatibility and Icon
 
 Codex SDK 现在作为原生 ESM 小运行时随 VSIX 提供，避免 CommonJS 打包破坏
@@ -133,8 +140,8 @@ npm run package:all
 
 生成：
 
-- `copilot-codex-provider-0.5.2-thin.vsix`
-- `copilot-codex-provider-0.5.2-win32-x64-full.vsix`
+- `copilot-codex-provider-0.6.0-thin.vsix`
+- `copilot-codex-provider-0.6.0-win32-x64-full.vsix`
 
 Marketplace 只发布 Thin 包；Full Win64 包作为 GitHub Release 附件。详细步骤见
 包内 `PUBLISHING.md`。

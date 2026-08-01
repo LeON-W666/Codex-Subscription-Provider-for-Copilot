@@ -9,8 +9,8 @@ npm run package:all
 
 Outputs:
 
-- `copilot-codex-provider-0.5.2-thin.vsix`
-- `copilot-codex-provider-0.5.2-win32-x64-full.vsix`
+- `copilot-codex-provider-0.6.0-thin.vsix`
+- `copilot-codex-provider-0.6.0-win32-x64-full.vsix`
 
 ## Marketplace
 
@@ -28,5 +28,5 @@ the Visual Studio Marketplace publisher portal.
 ## GitHub Release
 
 Commit source code and `package-lock.json`, but do not commit generated VSIX
-files. Create a `v0.5.2` tag; the release workflow builds both distributions
+files. Create a `v0.6.0` tag; the release workflow builds both distributions
 and attaches them to the GitHub Release.

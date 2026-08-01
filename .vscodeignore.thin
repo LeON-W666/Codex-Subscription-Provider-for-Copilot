@@ -5,8 +5,10 @@
 src/**
 test/**
 scripts/**
+docs/**
 node_modules/**
 runtime/**
+Skill_Context_Gateway_Architecture_Review_Report.md
 images/icon-concept-*.png
 images/*preview*.png
 **/*.map

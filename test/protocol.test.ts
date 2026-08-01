@@ -85,6 +85,94 @@ describe("buildCodexPrompt", () => {
     expect(prompt).toContain("No tools are available. Return kind=text.");
   });
 
+  it("explains a Copilot-supplied virtual URI edit chain without adding tools", () => {
+    const prompt = buildCodexPrompt(
+      [{ role: 1, content: [{ value: "Update the virtual object." }] }],
+      [
+        {
+          name: "get_object_workspace_uri",
+          description: "Returns a virtual workspace URI usable with standard file operations."
+        },
+        {
+          name: "apply_patch",
+          description: "Apply a patch to a file.",
+          inputSchema: {
+            type: "object",
+            properties: { patch: { type: "string" } },
+            required: ["patch"]
+          }
+        }
+      ],
+      1,
+      false,
+      4,
+      runtimeIdentity
+    );
+
+    expect(prompt).toContain("CAPABILITY_LINKS_JSON");
+    expect(prompt).toContain('"resolver":"get_object_workspace_uri"');
+    expect(prompt).toContain('"editor":"apply_patch"');
+    expect(prompt).toContain("adt://");
+    expect(prompt).toContain("Copilot remains responsible");
+    expect(prompt).not.toContain('"name":"abap_activate"');
+  });
+
+  it("omits old messages as budgeted groups while retaining current instructions", () => {
+    const oldMarker = `OLD_MARKER_${"x".repeat(20_000)}`;
+    const request = buildCodexBridgeRequest(
+      [
+        { role: 1, content: [{ value: oldMarker }] },
+        { role: 1, content: [{ value: "CURRENT_REQUEST" }] },
+        { role: 2, content: [{ value: "LATEST_EVIDENCE" }] }
+      ],
+      [],
+      1,
+      false,
+      4,
+      runtimeIdentity,
+      5_000
+    );
+
+    expect(request.conversationCompaction.applied).toBe(true);
+    expect(request.conversationCompaction.omittedMessageCount).toBe(1);
+    expect(request.prompt).toContain("CURRENT_REQUEST");
+    expect(request.prompt).toContain("LATEST_EVIDENCE");
+    expect(request.prompt).not.toContain("OLD_MARKER");
+  });
+
+  it("keeps a large synthetic bridge close to the configured total budget", () => {
+    const tools = Array.from({ length: 94 }, (_, index) => ({
+      name: `read_resource_${index}`,
+      description: `Read resource ${index}. ${"description ".repeat(30)}`,
+      inputSchema: {
+        type: "object",
+        properties: { uri: { type: "string" } },
+        required: ["uri"]
+      }
+    }));
+    const messages = [
+      { role: 1, content: [{ value: "CURRENT_LARGE_REQUEST" }] },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        role: 2,
+        content: [{ value: `history-${index}-${"x".repeat(10_000)}` }]
+      }))
+    ];
+
+    const request = buildCodexBridgeRequest(
+      messages,
+      tools,
+      1,
+      false,
+      4,
+      runtimeIdentity,
+      45_000
+    );
+
+    expect(request.conversationCompaction.applied).toBe(true);
+    expect(request.estimatedInputTokens).toBeLessThanOrEqual(46_000);
+    expect(request.prompt).toContain("CURRENT_LARGE_REQUEST");
+  });
+
   it("extracts image data for the Codex vision channel", () => {
     const image = new Uint8Array([137, 80, 78, 71]);
     const request = buildCodexBridgeRequest(

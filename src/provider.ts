@@ -2,8 +2,17 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Input, ModelReasoningEffort, ThreadItem } from "@openai/codex-sdk";
+import type { Input, ModelReasoningEffort } from "@openai/codex-sdk";
 import * as vscode from "vscode";
+import {
+  collectCodexResultDiagnostics,
+  formatCodexResultDiagnostics
+} from "./codexResultDiagnostics";
+import { createUnknownCodexRuntimeError } from "./codexRuntimeIssues";
+import {
+  inspectCodexResultItems,
+  validateCodexResult
+} from "./codexResultValidator";
 import {
   affectsProviderConfiguration,
   readConfiguration,
@@ -41,6 +50,10 @@ interface LastRequestDetails {
   readonly messageCount: number;
   readonly imageCount: number;
   readonly startedAt: number;
+  readonly estimatedInputTokens?: number;
+  readonly originalConversationTokens?: number;
+  readonly retainedConversationTokens?: number;
+  readonly omittedMessageCount?: number;
   readonly durationMs?: number;
   readonly result?: "text" | "tool_calls" | "cancelled" | "error";
   readonly error?: string;
@@ -174,8 +187,29 @@ export class CodexLanguageModelProvider
           modelDisplayName: selectedModel.displayName,
           reasoningEffort,
           orchestrator: "GitHub Copilot Agent"
-        }
+        },
+        configuration.bridgeInputTokenBudget
       );
+      const compaction = bridgeRequest.conversationCompaction;
+      this.lastRequest = {
+        ...this.lastRequest,
+        estimatedInputTokens: bridgeRequest.estimatedInputTokens,
+        originalConversationTokens: compaction.originalTokenEstimate,
+        retainedConversationTokens: compaction.retainedTokenEstimate,
+        omittedMessageCount: compaction.omittedMessageCount
+      };
+      this.logger.info(
+        `Bridge input estimatedTokens=${bridgeRequest.estimatedInputTokens} ` +
+        `budget=${configuration.bridgeInputTokenBudget} ` +
+        `conversationTokens=${compaction.originalTokenEstimate}->${compaction.retainedTokenEstimate} ` +
+        `omittedMessages=${compaction.omittedMessageCount}`
+      );
+      if (bridgeRequest.estimatedInputTokens > configuration.bridgeInputTokenBudget) {
+        this.logger.warn(
+          `Bridge input exceeds budget because required current context or tool schemas cannot be safely omitted ` +
+          `estimatedTokens=${bridgeRequest.estimatedInputTokens}`
+        );
+      }
       if (
         bridgeRequest.images.length > 0 &&
         !selectedModel.inputModalities.includes("image")
@@ -196,14 +230,38 @@ export class CodexLanguageModelProvider
             { type: "text", text: bridgeRequest.prompt },
             ...materializedImages.paths.map(path => ({ type: "local_image" as const, path }))
           ];
-      const result = await thread.run(codexInput, {
-        outputSchema: buildBridgeOutputSchema(configuration.maxToolCalls),
-        signal: controller.signal
-      });
+      const result = await (async () => {
+        try {
+          return await thread.run(codexInput, {
+            outputSchema: buildBridgeOutputSchema(configuration.maxToolCalls),
+            signal: controller.signal
+          });
+        } catch (error) {
+          if (controller.signal.aborted || isAbortError(error)) {
+            throw error;
+          }
+          throw createUnknownCodexRuntimeError();
+        }
+      })();
 
-      assertNoCodexSideEffects(result.items);
-      const response = parseBridgeResponse(
-        result.finalResponse,
+      const diagnostics = collectCodexResultDiagnostics(result, responseJson => {
+        parseBridgeResponse(
+          responseJson,
+          allowedTools,
+          configuration.maxToolCalls
+        );
+      });
+      this.logger.debug(formatCodexResultDiagnostics(diagnostics));
+
+      const issues = inspectCodexResultItems(result.items);
+      for (const issue of issues) {
+        if (issue.kind === "recoverable_warning") {
+          this.logger.warn(`Codex runtime warning code=${issue.code}`);
+        }
+      }
+      const response = validateCodexResult(
+        result,
+        issues,
         allowedTools,
         configuration.maxToolCalls
       );
@@ -288,6 +346,14 @@ export class CodexLanguageModelProvider
       `Reasoning effort: ${details.reasoningEffort}`,
       `Messages: ${details.messageCount}`,
       `Images sent to Codex: ${details.imageCount}`,
+      `Estimated bridge input: ${details.estimatedInputTokens === undefined ? "not built" : `${details.estimatedInputTokens} tokens`}`,
+      `Conversation compaction: ${
+        details.originalConversationTokens === undefined ||
+        details.retainedConversationTokens === undefined
+          ? "not built"
+          : `${details.originalConversationTokens} -> ${details.retainedConversationTokens} tokens, ` +
+            `${details.omittedMessageCount ?? 0} messages omitted`
+      }`,
       `Copilot tools received (${details.toolNames.length}): ${details.toolNames.join(", ") || "none"}`,
       `Result: ${details.result ?? "in progress"}`,
       `Duration: ${details.durationMs === undefined ? "in progress" : `${details.durationMs}ms`}`,
@@ -364,24 +430,6 @@ function resolveReasoningEffort(
     );
   }
   return effort;
-}
-
-function assertNoCodexSideEffects(items: readonly ThreadItem[]): void {
-  for (const item of items) {
-    if (
-      item.type === "command_execution" ||
-      item.type === "file_change" ||
-      item.type === "mcp_tool_call" ||
-      item.type === "web_search"
-    ) {
-      throw new Error(
-        `Codex attempted forbidden side activity (${item.type}); the response was rejected.`
-      );
-    }
-    if (item.type === "error") {
-      throw new Error(`Codex reported an error: ${item.message}`);
-    }
-  }
 }
 
 function isAbortError(error: unknown): boolean {
