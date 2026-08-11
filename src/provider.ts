@@ -35,8 +35,29 @@ import {
   buildCodexBridgeRequest,
   estimateMessageTokens,
   estimateTokens,
-  parseBridgeResponse
+  parseBridgeResponse,
+  type BridgeResponse
 } from "./protocol";
+import {
+  evaluateToolActivationRetry,
+  resolveToolCapabilities
+} from "./toolCapabilities";
+import {
+  planToolActivationRecovery,
+  selectToolActivationResponse
+} from "./toolActivationRecovery";
+import {
+  ForbiddenRuntimeActivityError,
+  RuntimeStreamFailureError,
+  RuntimeUserCancelledError,
+  abortRuntime,
+  collectRuntimeStream,
+  rethrowRuntimeStreamError,
+  throwIfUserCancelled,
+  type RuntimeAbortReason,
+  type RuntimeAbortState,
+  type RuntimeStreamResult
+} from "./runtimeStreamCollector";
 import {
   assertChatGptSubscriptionAuth,
   createSubscriptionEnvironment
@@ -54,6 +75,22 @@ interface LastRequestDetails {
   readonly originalConversationTokens?: number;
   readonly retainedConversationTokens?: number;
   readonly omittedMessageCount?: number;
+  readonly runtimeEventCount?: number;
+  readonly runtimeStartedItemCount?: number;
+  readonly runtimeUpdatedItemCount?: number;
+  readonly runtimeCompletedItemCount?: number;
+  readonly runtimeTurnCount?: number;
+  readonly runtimeMetricScope?: "single turn" | "aggregate counts; final-turn latency";
+  readonly firstRuntimeEventMs?: number;
+  readonly runtimeTurnStartedMs?: number;
+  readonly runtimeTurnCompletedMs?: number;
+  readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly cacheWriteInputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningOutputTokens?: number;
+  readonly recoveryAttempted?: boolean;
+  readonly recoveryResult?: "text" | "tool_calls";
   readonly durationMs?: number;
   readonly result?: "text" | "tool_calls" | "cancelled" | "error";
   readonly error?: string;
@@ -131,7 +168,16 @@ export class CodexLanguageModelProvider
     const toolNames = tools.map(tool => tool.name);
     const allowedTools = new Set(toolNames);
     const controller = new AbortController();
-    const cancellation = token.onCancellationRequested(() => controller.abort());
+    const abortState: RuntimeAbortState = {};
+    const abort = (reason: RuntimeAbortReason): void => {
+      abortRuntime(abortState, controller, reason);
+    };
+    const cancellation = token.onCancellationRequested(() => {
+      abort("user_cancelled");
+    });
+    if (token.isCancellationRequested) {
+      abort("user_cancelled");
+    }
     const startedAt = Date.now();
 
     this.lastRequest = {
@@ -230,46 +276,165 @@ export class CodexLanguageModelProvider
             { type: "text", text: bridgeRequest.prompt },
             ...materializedImages.paths.map(path => ({ type: "local_image" as const, path }))
           ];
-      const result = await (async () => {
+      const runStreamedTurn = async (input: Input): Promise<RuntimeStreamResult> => {
         try {
-          return await thread.run(codexInput, {
+          const streamed = await thread.runStreamed(input, {
             outputSchema: buildBridgeOutputSchema(configuration.maxToolCalls),
             signal: controller.signal
           });
+          const runtimeStartedAt = Date.now();
+          return await collectRuntimeStream({
+            events: streamed.events,
+            runtimeStartedAt,
+            getAbortReason: () => abortState.reason,
+            abort
+          });
         } catch (error) {
-          if (controller.signal.aborted || isAbortError(error)) {
-            throw error;
-          }
-          throw createUnknownCodexRuntimeError();
+          rethrowRuntimeStreamError(error, abortState.reason);
         }
-      })();
+      };
 
-      const diagnostics = collectCodexResultDiagnostics(result, responseJson => {
-        parseBridgeResponse(
-          responseJson,
+      const validateTurn = (turn: RuntimeStreamResult): BridgeResponse => {
+        throwIfUserCancelled(
+          abortState,
+          token.isCancellationRequested
+        );
+
+        const diagnostics = collectCodexResultDiagnostics(turn, responseJson => {
+          parseBridgeResponse(
+            responseJson,
+            allowedTools,
+            configuration.maxToolCalls
+          );
+        });
+        this.logger.debug(formatCodexResultDiagnostics(diagnostics));
+
+        const issues = inspectCodexResultItems(turn.items);
+        for (const issue of issues) {
+          if (issue.kind === "recoverable_warning") {
+            this.logger.warn(`Codex runtime warning code=${issue.code}`);
+          }
+        }
+        const response = validateCodexResult(
+          turn,
+          issues,
           allowedTools,
           configuration.maxToolCalls
         );
-      });
-      this.logger.debug(formatCodexResultDiagnostics(diagnostics));
 
-      const issues = inspectCodexResultItems(result.items);
-      for (const issue of issues) {
-        if (issue.kind === "recoverable_warning") {
-          this.logger.warn(`Codex runtime warning code=${issue.code}`);
+        throwIfUserCancelled(
+          abortState,
+          token.isCancellationRequested
+        );
+        return response;
+      };
+
+      const runtimeTurns: RuntimeStreamResult[] = [];
+      const firstResult = await runStreamedTurn(codexInput);
+      runtimeTurns.push(firstResult);
+      let result = firstResult;
+      let response = validateTurn(firstResult);
+      let recoveryAttempted = false;
+      const firstRuntimeSummary = summarizeRuntimeTurns([firstResult]);
+      this.lastRequest = {
+        ...this.lastRequest,
+        runtimeEventCount: firstRuntimeSummary.eventCount,
+        runtimeStartedItemCount: firstRuntimeSummary.startedItemCount,
+        runtimeUpdatedItemCount: firstRuntimeSummary.updatedItemCount,
+        runtimeCompletedItemCount: firstRuntimeSummary.completedItemCount,
+        runtimeTurnCount: 1,
+        runtimeMetricScope: "single turn",
+        firstRuntimeEventMs: firstResult.metrics.firstEventDelayMs,
+        runtimeTurnStartedMs: firstResult.metrics.turnStartedDelayMs,
+        runtimeTurnCompletedMs: firstResult.metrics.turnCompletedDelayMs,
+        ...(firstRuntimeSummary.usage === null
+          ? {}
+          : {
+              inputTokens: firstRuntimeSummary.usage.input_tokens,
+              cachedInputTokens: firstRuntimeSummary.usage.cached_input_tokens,
+              cacheWriteInputTokens:
+                firstRuntimeSummary.usage.cache_write_input_tokens,
+              outputTokens: firstRuntimeSummary.usage.output_tokens,
+              reasoningOutputTokens:
+                firstRuntimeSummary.usage.reasoning_output_tokens
+            }),
+        recoveryAttempted: false
+      };
+
+      if (response.kind === "text") {
+        const capabilityDecision = evaluateToolActivationRetry(
+          messages,
+          vscode.LanguageModelChatMessageRole.User,
+          resolveToolCapabilities(tools),
+          response.text
+        );
+        const recoveryPlan = planToolActivationRecovery(
+          capabilityDecision,
+          recoveryAttempted
+        );
+        this.logger.debug(
+          `Tool activation recovery decision action=${capabilityDecision.actionRequest} ` +
+          `unavailable=${capabilityDecision.responseClaimsUnavailable} ` +
+          `categories=${capabilityDecision.requestedCategories.join(",") || "none"} ` +
+          `activators=${capabilityDecision.activators.join(",") || "none"} ` +
+          `trigger=${recoveryPlan.trigger}`
+        );
+
+        if (recoveryPlan.trigger) {
+          recoveryAttempted = true;
+          this.lastRequest = {
+            ...this.lastRequest,
+            recoveryAttempted: true
+          };
+          const recoveryResult = await runStreamedTurn(recoveryPlan.prompt);
+          runtimeTurns.push(recoveryResult);
+          result = recoveryResult;
+          const secondResponse = validateTurn(recoveryResult);
+          response = selectToolActivationResponse(response, secondResponse);
+          this.logger.debug(
+            `Tool activation recovery completed result=${response.kind}`
+          );
         }
       }
-      const response = validateCodexResult(
-        result,
-        issues,
-        allowedTools,
-        configuration.maxToolCalls
-      );
+
+      const runtimeSummary = summarizeRuntimeTurns(runtimeTurns);
+      this.lastRequest = {
+        ...this.lastRequest,
+        runtimeEventCount: runtimeSummary.eventCount,
+        runtimeStartedItemCount: runtimeSummary.startedItemCount,
+        runtimeUpdatedItemCount: runtimeSummary.updatedItemCount,
+        runtimeCompletedItemCount: runtimeSummary.completedItemCount,
+        runtimeTurnCount: runtimeTurns.length,
+        runtimeMetricScope:
+          runtimeTurns.length > 1
+            ? "aggregate counts; final-turn latency"
+            : "single turn",
+        firstRuntimeEventMs: result.metrics.firstEventDelayMs,
+        runtimeTurnStartedMs: result.metrics.turnStartedDelayMs,
+        runtimeTurnCompletedMs: result.metrics.turnCompletedDelayMs,
+        ...(runtimeSummary.usage === null
+          ? {}
+          : {
+              inputTokens: runtimeSummary.usage.input_tokens,
+              cachedInputTokens: runtimeSummary.usage.cached_input_tokens,
+              cacheWriteInputTokens:
+                runtimeSummary.usage.cache_write_input_tokens,
+              outputTokens: runtimeSummary.usage.output_tokens,
+              reasoningOutputTokens:
+                runtimeSummary.usage.reasoning_output_tokens
+            }),
+        recoveryAttempted,
+        ...(recoveryAttempted ? { recoveryResult: response.kind } : {})
+      };
 
       if (response.kind === "text") {
         progress.report(new vscode.LanguageModelTextPart(response.text));
       } else {
         for (const call of response.toolCalls) {
+          throwIfUserCancelled(
+            abortState,
+            token.isCancellationRequested
+          );
           const callId = randomUUID();
           progress.report(
             new vscode.LanguageModelToolCallPart(
@@ -291,7 +456,30 @@ export class CodexLanguageModelProvider
         `Request completed model=${selectedModel.model} result=${response.kind} durationMs=${Date.now() - startedAt}`
       );
     } catch (error) {
-      if (token.isCancellationRequested || isAbortError(error)) {
+      if (error instanceof ForbiddenRuntimeActivityError) {
+        this.lastRequest = {
+          ...this.lastRequest,
+          durationMs: Date.now() - startedAt,
+          result: "error",
+          error: safeErrorMessage(error)
+        };
+        this.logger.warn(`Codex request rejected code=${error.code}`);
+        throw toLanguageModelError(error);
+      }
+
+      if (error instanceof RuntimeStreamFailureError) {
+        this.logger.warn(`Codex stream failed code=${error.code}`);
+        const publicError = createUnknownCodexRuntimeError();
+        this.lastRequest = {
+          ...this.lastRequest,
+          durationMs: Date.now() - startedAt,
+          result: "error",
+          error: safeErrorMessage(publicError)
+        };
+        throw toLanguageModelError(publicError);
+      }
+
+      if (error instanceof RuntimeUserCancelledError) {
         this.lastRequest = {
           ...this.lastRequest,
           durationMs: Date.now() - startedAt,
@@ -301,14 +489,15 @@ export class CodexLanguageModelProvider
         return;
       }
 
+      const publicError = createUnknownCodexRuntimeError();
       this.lastRequest = {
         ...this.lastRequest,
         durationMs: Date.now() - startedAt,
         result: "error",
-        error: safeErrorMessage(error)
+        error: safeErrorMessage(publicError)
       };
-      this.logger.error("Request failed", error);
-      throw toLanguageModelError(error);
+      this.logger.error("Request failed", publicError);
+      throw toLanguageModelError(publicError);
     } finally {
       cancellation.dispose();
       cleanupImageInputs(imageInputDirectory);
@@ -341,6 +530,27 @@ export class CodexLanguageModelProvider
     }
 
     const details = this.lastRequest;
+    const runtimeItems =
+      details.runtimeStartedItemCount === undefined ||
+      details.runtimeUpdatedItemCount === undefined ||
+      details.runtimeCompletedItemCount === undefined
+        ? "not collected"
+        : `${details.runtimeStartedItemCount} started / ` +
+          `${details.runtimeUpdatedItemCount} updated / ` +
+          `${details.runtimeCompletedItemCount} completed`;
+    const usage =
+      details.inputTokens === undefined ||
+      details.cachedInputTokens === undefined ||
+      details.cacheWriteInputTokens === undefined ||
+      details.outputTokens === undefined ||
+      details.reasoningOutputTokens === undefined
+        ? "not collected"
+        : `input ${details.inputTokens} / ` +
+          `cached ${details.cachedInputTokens} / ` +
+          `cache-write ${details.cacheWriteInputTokens} / ` +
+          `output ${details.outputTokens} / ` +
+          `reasoning ${details.reasoningOutputTokens}`;
+
     return [
       `Model: ${details.model}`,
       `Reasoning effort: ${details.reasoningEffort}`,
@@ -354,6 +564,14 @@ export class CodexLanguageModelProvider
           : `${details.originalConversationTokens} -> ${details.retainedConversationTokens} tokens, ` +
             `${details.omittedMessageCount ?? 0} messages omitted`
       }`,
+      `Runtime events: ${details.runtimeEventCount ?? "not collected"}`,
+      `Runtime turns: ${details.runtimeTurnCount ?? "not collected"} (${details.runtimeMetricScope ?? "not collected"})`,
+      `Runtime items: ${runtimeItems}`,
+      `Runtime first event: ${formatOptionalMilliseconds(details.firstRuntimeEventMs)}`,
+      `Runtime turn started: ${formatOptionalMilliseconds(details.runtimeTurnStartedMs)}`,
+      `Runtime turn completed: ${formatOptionalMilliseconds(details.runtimeTurnCompletedMs)}`,
+      `Usage: ${usage}`,
+      `Tool activation recovery: ${details.recoveryAttempted === undefined ? "not evaluated" : details.recoveryAttempted ? `triggered (${details.recoveryResult ?? "not completed"})` : "not triggered"}`,
       `Copilot tools received (${details.toolNames.length}): ${details.toolNames.join(", ") || "none"}`,
       `Result: ${details.result ?? "in progress"}`,
       `Duration: ${details.durationMs === undefined ? "in progress" : `${details.durationMs}ms`}`,
@@ -432,9 +650,64 @@ function resolveReasoningEffort(
   return effort;
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error &&
-    (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
+function formatOptionalMilliseconds(value: number | undefined): string {
+  return value === undefined ? "not observed" : `${value}ms`;
+}
+
+interface RuntimeTurnSummary {
+  readonly eventCount: number;
+  readonly startedItemCount: number;
+  readonly updatedItemCount: number;
+  readonly completedItemCount: number;
+  readonly usage: NonNullable<RuntimeStreamResult["usage"]> | null;
+}
+
+function summarizeRuntimeTurns(
+  turns: readonly RuntimeStreamResult[]
+): RuntimeTurnSummary {
+  const usageTurns = turns
+    .map(turn => turn.usage)
+    .filter((usage): usage is NonNullable<RuntimeStreamResult["usage"]> => usage !== null);
+
+  return {
+    eventCount: turns.reduce((sum, turn) => sum + turn.metrics.eventCount, 0),
+    startedItemCount: turns.reduce(
+      (sum, turn) => sum + turn.metrics.startedItemCount,
+      0
+    ),
+    updatedItemCount: turns.reduce(
+      (sum, turn) => sum + turn.metrics.updatedItemCount,
+      0
+    ),
+    completedItemCount: turns.reduce(
+      (sum, turn) => sum + turn.metrics.completedItemCount,
+      0
+    ),
+    usage: usageTurns.length === 0
+      ? null
+      : {
+          input_tokens: usageTurns.reduce(
+            (sum, usage) => sum + usage.input_tokens,
+            0
+          ),
+          cached_input_tokens: usageTurns.reduce(
+            (sum, usage) => sum + usage.cached_input_tokens,
+            0
+          ),
+          cache_write_input_tokens: usageTurns.reduce(
+            (sum, usage) => sum + usage.cache_write_input_tokens,
+            0
+          ),
+          output_tokens: usageTurns.reduce(
+            (sum, usage) => sum + usage.output_tokens,
+            0
+          ),
+          reasoning_output_tokens: usageTurns.reduce(
+            (sum, usage) => sum + usage.reasoning_output_tokens,
+            0
+          )
+        }
+  };
 }
 
 function toLanguageModelError(error: unknown): vscode.LanguageModelError {

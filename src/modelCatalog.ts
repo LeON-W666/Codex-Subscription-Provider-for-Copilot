@@ -168,7 +168,7 @@ export async function discoverCodexModels(
         clientInfo: {
           name: "copilot-codex-provider",
           title: "Codex Subscription Provider for Copilot",
-          version: "0.6.0"
+          version: "0.6.1"
         },
         capabilities: null
       }

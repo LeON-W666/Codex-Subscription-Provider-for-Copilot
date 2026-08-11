@@ -117,6 +117,37 @@ describe("buildCodexPrompt", () => {
     expect(prompt).not.toContain('"name":"abap_activate"');
   });
 
+  it("describes direct, loadable, and absent capability states without inventing tools", () => {
+    const prompt = buildCodexPrompt(
+      [{ role: 1, content: [{ value: "Activate the object." }] }],
+      [
+        {
+          name: "activate_object_management_tools",
+          description: "Activate the object management tool group."
+        },
+        {
+          name: "create_object",
+          description: "Create an object."
+        }
+      ],
+      1,
+      false,
+      4,
+      runtimeIdentity
+    );
+
+    expect(prompt).toContain('"category":"edit/create"');
+    expect(prompt).toContain('"directTools":["create_object"]');
+    expect(prompt).toContain('"category":"object-management/activate"');
+    expect(prompt).toContain('"activators":["activate_object_management_tools"]');
+    expect(prompt).toContain("request a matching tool-group activator first");
+    expect(prompt).toContain("tool-group activation only loads tools and does not activate");
+    expect(prompt).toContain("Only a tool listed in activations followed by its matching successful tool_result");
+    expect(prompt).toContain("even when that capability group has create/manage directTools");
+    expect(prompt).toContain("no direct tool or matching activator is supplied");
+    expect(prompt).not.toContain('"name":"abap_activate"');
+  });
+
   it("omits old messages as budgeted groups while retaining current instructions", () => {
     const oldMarker = `OLD_MARKER_${"x".repeat(20_000)}`;
     const request = buildCodexBridgeRequest(

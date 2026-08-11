@@ -8,13 +8,10 @@ import {
   parseBridgeResponse,
   type BridgeResponse
 } from "./protocol";
-
-const FORBIDDEN_SIDE_EFFECT_TYPES = new Set([
-  "command_execution",
-  "file_change",
-  "mcp_tool_call",
-  "web_search"
-]);
+import {
+  ForbiddenRuntimeActivityError,
+  isForbiddenRuntimeActivityType
+} from "./runtimeStreamCollector";
 
 export interface CodexValidationResultLike {
   readonly items: readonly CodexRuntimeItemLike[];
@@ -25,12 +22,13 @@ export function assertNoForbiddenSideEffects(
   items: readonly CodexRuntimeItemLike[]
 ): void {
   const forbidden = items.find(item =>
-    FORBIDDEN_SIDE_EFFECT_TYPES.has(item.type)
+    isForbiddenRuntimeActivityType(item.type)
   );
-  if (forbidden !== undefined) {
-    throw new Error(
-      `Codex attempted forbidden side activity (${forbidden.type}); the response was rejected.`
-    );
+  if (
+    forbidden !== undefined &&
+    isForbiddenRuntimeActivityType(forbidden.type)
+  ) {
+    throw new ForbiddenRuntimeActivityError(forbidden.type);
   }
 }
 

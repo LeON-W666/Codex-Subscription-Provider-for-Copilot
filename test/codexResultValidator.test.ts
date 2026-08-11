@@ -3,6 +3,9 @@ import {
   inspectCodexResultItems,
   validateCodexResult
 } from "../src/codexResultValidator";
+import {
+  ForbiddenRuntimeActivityError
+} from "../src/runtimeStreamCollector";
 
 const warningMessage =
   "Skill descriptions were shortened for the skills context budget. Codex can still see every skill.";
@@ -16,6 +19,9 @@ describe("Codex result validation", () => {
   ])("rejects forbidden side effect %s", type => {
     expect(() => inspectCodexResultItems([{ type }])).toThrow(
       `forbidden side activity (${type})`
+    );
+    expect(() => inspectCodexResultItems([{ type }])).toThrow(
+      ForbiddenRuntimeActivityError
     );
   });
 
