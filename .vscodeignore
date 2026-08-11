@@ -11,6 +11,7 @@ images/icon-concept-*.png
 images/*preview*.png
 **/*.map
 *.vsix
+*.log
 esbuild.mjs
 tsconfig.json
 package-lock.json

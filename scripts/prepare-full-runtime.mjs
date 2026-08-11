@@ -1,4 +1,10 @@
-import { cpSync, existsSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +26,29 @@ if (!existsSync(source)) {
   );
 }
 
+const runtimePackage = JSON.parse(
+  readFileSync(
+    join(
+      projectRoot,
+      "node_modules",
+      "@openai",
+      "codex-win32-x64",
+      "package.json"
+    ),
+    "utf8"
+  )
+);
 rmSync(join(projectRoot, "runtime"), { recursive: true, force: true });
 cpSync(source, destination, { recursive: true });
-console.log(`Prepared Full Win64 runtime at ${destination}`);
+writeFileSync(
+  join(projectRoot, "runtime", "version.json"),
+  `${JSON.stringify({
+    package: "@openai/codex-win32-x64",
+    version: runtimePackage.version,
+    target: "win32-x64"
+  }, null, 2)}\n`,
+  "utf8"
+);
+console.log(
+  `Prepared Full Win64 runtime ${runtimePackage.version} at ${destination}`
+);

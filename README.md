@@ -11,6 +11,20 @@ An unofficial Visual Studio Code extension that connects GitHub Copilot Chat to 
 
 [简体中文](README.zh-CN.md)
 
+## 0.6.2 Runtime Event Stream Guarding
+
+- Processes complete Codex turns through `runStreamed()` without exposing
+  intermediate Runtime content to Copilot.
+- Rejects forbidden, unknown, malformed, incomplete, or failed Runtime streams
+  before Bridge output is accepted.
+- Keeps security and Runtime failures ahead of ordinary cancellation and checks
+  cancellation again before every Copilot response part.
+- Reports privacy-safe event counts, lifecycle timings, and token usage in
+  Last Request Details.
+- Uses Codex SDK `0.146.0`; Full Win64 bundles Runtime
+  `0.146.0-win32-x64`, while Thin builds smoke-test the selected external
+  official Runtime.
+
 ## 0.6.0 Provider Reliability
 
 - Links Copilot-supplied virtual workspace URI resolvers to compatible editing
@@ -118,7 +132,9 @@ npm run validate
 npm run package:thin
 ```
 
-The test suite covers subscription-auth validation, runtime resolution, model catalog parsing, image handling, structured tool-call bridging, and SDK loading.
+The test suite covers subscription-auth validation, runtime resolution, model
+catalog parsing, image handling, guarded Runtime event aggregation,
+cancellation races, structured tool-call bridging, and SDK loading.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
 

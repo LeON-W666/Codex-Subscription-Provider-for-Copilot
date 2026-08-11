@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
@@ -14,5 +14,25 @@ if (typeof sdk.Codex !== "function") {
   throw new Error("Vendored Codex SDK did not export Codex.");
 }
 
-new sdk.Codex({ codexPathOverride: process.execPath, env: {} });
-console.log("Vendored Codex SDK initialized with a valid import.meta.url.");
+const codex = new sdk.Codex({
+  codexPathOverride: process.execPath,
+  env: {}
+});
+const thread = codex.startThread({
+  workingDirectory: projectRoot,
+  skipGitRepoCheck: true,
+  sandboxMode: "read-only",
+  approvalPolicy: "never",
+  networkAccessEnabled: false,
+  webSearchMode: "disabled"
+});
+if (typeof thread.runStreamed !== "function") {
+  throw new Error("Vendored Codex SDK does not support runStreamed().");
+}
+
+const sdkPackage = JSON.parse(
+  readFileSync(join(projectRoot, "vendor", "codex-sdk", "package.json"), "utf8")
+);
+console.log(
+  `Vendored Codex SDK ${sdkPackage.version} initialized; runStreamed() is available.`
+);

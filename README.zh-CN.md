@@ -10,6 +10,18 @@
 > This is an independent project and is not endorsed by OpenAI, Microsoft, or
 > GitHub.
 
+## 0.6.2 Runtime 事件流防护
+
+- 使用 `runStreamed()` 处理完整 Codex Turn，不向 Copilot 暴露 Runtime
+  中间内容。
+- 在接受 Bridge 输出前，对禁止、未知、畸形、不完整或失败的 Runtime 事件流
+  统一失败关闭。
+- 安全错误和 Runtime Failure 优先于普通取消，并在每个 Copilot 输出 Part
+  前再次检查取消。
+- Last Request Details 增加隐私安全的事件计数、生命周期耗时和 Token Usage。
+- 固定使用 Codex SDK `0.146.0`；Full Win64 包含 Runtime
+  `0.146.0-win32-x64`，Thin 版对实际选择的外部官方 Runtime 执行 Smoke。
+
 ## 0.6.0 Provider Reliability
 
 - 在不改变 Copilot 工具执行边界的前提下，关联虚拟 workspace URI 与编辑工具。
@@ -140,8 +152,8 @@ npm run package:all
 
 生成：
 
-- `copilot-codex-provider-0.6.0-thin.vsix`
-- `copilot-codex-provider-0.6.0-win32-x64-full.vsix`
+- `copilot-codex-provider-0.6.2-thin.vsix`
+- `copilot-codex-provider-0.6.2-win32-x64-full.vsix`
 
 Marketplace 只发布 Thin 包；Full Win64 包作为 GitHub Release 附件。详细步骤见
 包内 `PUBLISHING.md`。
